@@ -1,6 +1,7 @@
 import configparser
 import hashlib
 import json
+import os
 import socket
 
 from conf import settings
@@ -12,7 +13,8 @@ class FtpServer(object):
     STATUS_CODE = {
         200: "Passed authentication",
         201: "wrong username or password",
-        300: "file does not exist!"
+        300: "file does not exist!",
+        301: "File exist, and this msg include the file size !"
     }
 
     # 消息最长1024
@@ -26,6 +28,8 @@ class FtpServer(object):
         self.sock.listen(settings.MAX_SOCKET_LISTEN)
         self.accounts = self.load_accounts()
 
+        self.user_obj = None
+
     def run_forever(self):
         """启动socket server"""
         print("starting ftp server on {}:{}".format(settings.HOST, settings.PORT).center(50, "-"))
@@ -38,7 +42,7 @@ class FtpServer(object):
     def handle(self):
         """处理所有的与用户的指令交互"""
         while True:
-            raw_data = self.request.recv(1024)
+            raw_data = self.request.recv(self.MSG_SIZE)
             print("收到的data: ", raw_data)
             if not raw_data:
                 print("connection %s is lost" % (self.addr,))
@@ -68,7 +72,11 @@ class FtpServer(object):
             md5_obj = hashlib.md5()
             md5_obj.update(password.encode("utf-8"))
             if _password == md5_obj.hexdigest():
-                print("passed authentication...")
+                # print("passed authentication...")
+                # set user home directory
+                self.user_obj = self.accounts[username]
+                # 设置用户家目录
+                self.user_obj["home"] = os.path.join(settings.USER_HOME_DIR, username)
                 return True
             else:
                 print("wrong username or password")
@@ -110,3 +118,27 @@ class FtpServer(object):
             self.send_response(stats_code=200)
         else:
             self.send_response(stats_code=201)
+
+    def _get(self, data):
+        """client download file through this method
+            1. 拿到文件名
+            2. 判断文件是否存在
+                2.1 如果存在，返回文件大小+状态码
+                    2.1.1 打开文件，发送文件内容
+                2.2 不存在，返回状态码
+        """
+        filename = data.get("filename")
+        full_path = os.path.join(self.user_obj["home"], filename)
+        if os.path.isfile(full_path):
+            filesize = os.stat(full_path).st_size
+            self.send_response(301, file_size=filesize)
+            print("ready to send file")
+
+            f = open(full_path, mode="rb")
+            for line in f:
+                self.request.send(line)
+            else:
+                print("file send done...", full_path)
+            f.close()
+        else:
+            self.send_response(300)
