@@ -13,12 +13,13 @@ class FtpClient(object):
         self.username = None
         parser = optparse.OptionParser()
         parser.add_option("-s", "--server", dest="server", help="ftp server ip_addr")
-        parser.add_option("-p", "--port", type="int", dest="port", help="ftp server port")
+        parser.add_option("-P", "--port", type="int", dest="port", help="ftp server port")
         parser.add_option("-u", "--username", dest="username", help="username info")
         parser.add_option("-p", "--password", dest="password", help="password info")
         self.options, self.args = parser.parse_args()
 
         print(self.options, self.args)
+        self.make_connection()
 
     def argv_verification(self):
         """检查参数合法性"""
@@ -135,6 +136,7 @@ class FtpClient(object):
                     print("file [%s] recv done,file size [%s] " % (filename, file_size))
                     f.close()
             else:
+                # status_code:300 file not exist
                 print(response.get("status_msg"))
 
     def _put(self):

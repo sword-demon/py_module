@@ -48,7 +48,7 @@ class FtpServer(object):
                 print("connection %s is lost" % (self.addr,))
                 del self.request, self.addr
                 break
-            data = json.loads(raw_data).decode("utf-8")
+            data = json.loads(raw_data.decode("utf-8"))
             action_type = data.get("action_type")
             if action_type:
                 if hasattr(self, "_%s" % action_type):
@@ -115,9 +115,9 @@ class FtpServer(object):
             # 1. 消息内容 状态码
             # 2. json.dumps
             # 3. encode
-            self.send_response(stats_code=200)
+            self.send_response(status_code=200)
         else:
-            self.send_response(stats_code=201)
+            self.send_response(status_code=201)
 
     def _get(self, data):
         """client download file through this method
