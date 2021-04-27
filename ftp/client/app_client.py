@@ -69,6 +69,7 @@ class FtpClient(object):
                 if not user_input: continue
 
                 cmd_list = user_input.strip()
+                print(cmd_list[0])
                 if hasattr(self, "_%s" % cmd_list[0]):
                     func = getattr(self, "_%s" % cmd_list[0])
                     func(cmd_list[1:])
@@ -104,6 +105,27 @@ class FtpClient(object):
             bytes_msgs = json.dumps(msg_data).encode("utf-8")
         self.sock.send(bytes_msgs)
 
+    def _ls(self, cmd_args):
+        """display current dir's file list"""
+        self.send_msg(action_type="ls")
+        response = self.get_response()  # 1024
+        print(response)
+        if response.get("status_code") == 302:
+            # ready to send long msg
+            cmd_result_size = response.get("cmd_result_size")
+            received_size = 0
+            cmd_result = b""
+            while received_size < cmd_result_size:
+                if cmd_result_size - received_size < 8192:
+                    data = self.sock.recv(cmd_result_size - received_size)
+                else:
+                    data = self.sock.recv(8192)
+                cmd_result += data
+                received_size += len(data)
+            else:
+                print(cmd_result.decode("gbk"))
+
+
     def _get(self, cmd_args):
         """download files from ftp server
             1. 拿到文件名
@@ -114,6 +136,7 @@ class FtpClient(object):
                 3.2 文件如果不存在
                     print status_msg
         """
+        print(cmd_args)
         if self.parameter_check(cmd_args, min_args=1):
             filename = cmd_args[0]
             self.send_msg(action_type="get", filename=filename)

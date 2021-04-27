@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import socket
+import subprocess
 
 from conf import settings
 
@@ -14,7 +15,8 @@ class FtpServer(object):
         200: "Passed authentication",
         201: "wrong username or password",
         300: "file does not exist!",
-        301: "File exist, and this msg include the file size !"
+        301: "File exist, and this msg include the file size !",
+        302: "This msg include msg size!"
     }
 
     # 消息最长1024
@@ -142,3 +144,20 @@ class FtpServer(object):
             f.close()
         else:
             self.send_response(300)
+
+    def _ls(self, data):
+        """run dir command and send result to client"""
+        cmd_obj = subprocess.Popen("ls", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        stdout = cmd_obj.stdout.read()
+        stderr = cmd_obj.stderr.read()
+
+        cmd_result = stdout + stderr
+
+        if not cmd_result:
+            cmd_result = b"current dir has no file at all."
+
+        # 告诉服务端长度是多少
+        self.send_response(302, cmd_result_size=len(cmd_result))
+        self.request.sendall(cmd_result)
+
+
