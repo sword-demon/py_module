@@ -16,7 +16,9 @@ class FtpServer(object):
         201: "wrong username or password",
         300: "file does not exist!",
         301: "File exist, and this msg include the file size !",
-        302: "This msg include msg size!"
+        302: "This msg include msg size!",
+        350: "Dir changed!",
+        351: "Dir does not exist!",
     }
 
     # 消息最长1024
@@ -160,4 +162,24 @@ class FtpServer(object):
         self.send_response(302, cmd_result_size=len(cmd_result))
         self.request.sendall(cmd_result)
 
-
+    def _cd(self, data):
+        """根据用户的目标地址改变self.user_current_dir的值
+        1. 必须在家目录的基础上，把target_dir 和 user_current_dir 拼接
+        2. 检测要去的目录是否存在，
+            2.1 存在则改变self.user_current_dir 为新的路径
+            2.2 不存在返回错误消息
+        """
+        target_dir = data.get("target_dir")
+        # abspath为了解决 ../.. 的问题
+        full_path = os.path.abspath(os.path.join(self.user_current_dir, target_dir))
+        print("full_path:", full_path)
+        if os.path.isdir(full_path):
+            if full_path.startswith(self.user_obj['home']):
+                # has permission
+                self.user_current_dir = full_path
+                relative_current_dir = self.user_current_dir.replace(self.user_obj['home'], "")
+                self.send_response(350, current_dir=relative_current_dir)
+            else:
+                self.send_response(351)
+        else:
+            self.send_response(351)

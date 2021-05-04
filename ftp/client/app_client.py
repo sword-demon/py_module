@@ -11,6 +11,8 @@ class FtpClient(object):
 
     def __init__(self):
         self.username = None
+        # 用户交互显示
+        self.terminal_display = None
         parser = optparse.OptionParser()
         parser.add_option("-s", "--server", dest="server", help="ftp server ip_addr")
         parser.add_option("-P", "--port", type="int", dest="port", help="ftp server port")
@@ -56,6 +58,7 @@ class FtpClient(object):
             print(response)
             if response.get("status_code") == 200:
                 self.username = username
+                self.terminal_display = "[%s]>>>:" % self.username
                 return True
             else:
                 print(response.get("status_msg"))
@@ -65,7 +68,7 @@ class FtpClient(object):
         """处理与ftp server的交互"""
         if self.auth():
             while True:
-                user_input = input("[%s]>>>:" % self.username).strip()
+                user_input = input(self.terminal_display).strip()
                 if not user_input: continue
 
                 cmd_list = user_input.strip()
@@ -125,6 +128,17 @@ class FtpClient(object):
             else:
                 print(cmd_result.decode("gbk"))
 
+    def _cd(self, cmd_args):
+        """change to target dir 切换目录"""
+        # 必须有一个参数
+        if self.parameter_check(cmd_args, exact_args=1):
+            target_dir = cmd_args[0]
+            self.send_msg(action_type="cd", target_dir=target_dir)
+            response = self.get_response()
+            print(response)
+            if response.get("status_code") == 350:
+                # dir changed successfully
+                self.terminal_display = "[/%s]" % response.get("current_dir")
 
     def _get(self, cmd_args):
         """download files from ftp server
