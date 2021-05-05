@@ -1,3 +1,4 @@
+import os
 import socket
 import optparse
 import json
@@ -160,6 +161,8 @@ class FtpClient(object):
                 file_size = response.get("file_size")
 
                 received_size = 0
+                progress_generator = self.progress_bar(file_size)
+                progress_generator.__next__()
                 f = open(filename, mode="wb")
                 while received_size < file_size:
                     if file_size - received_size < 8192:
@@ -168,7 +171,8 @@ class FtpClient(object):
                         data = self.sock.recv(8192)
                     received_size += len(data)
                     f.write(data)
-                    print(received_size, file_size)
+                    progress_generator.send(received_size)
+                    # print(received_size, file_size)
                 else:
                     print("file [%s] recv done,file size [%s] " % (filename, file_size))
                     f.close()
@@ -176,8 +180,46 @@ class FtpClient(object):
                 # status_code:300 file not exist
                 print(response.get("status_msg"))
 
-    def _put(self):
-        pass
+    def progress_bar(self, total_size):
+        current_percent = 0
+        last_percent = 0
+        while True:
+            received_size = yield current_percent
+            current_percent = int(received_size / total_size * 100)
+            if current_percent > last_percent:
+                print("#" * int(current_percent / 2) + "{}%".format(current_percent), end="\r", flush=True)
+                # 把本次循环的百分比赋值给上一次的
+                last_percent = current_percent
+
+    def _put(self, cmd_args):
+        """上传本地文件到服务器
+        1. 确保本地文件存在
+        2. 拿到文件名+大小，放到消息头里发送给服务端
+        3. 打开文件，发送内容
+        """
+        if self.parameter_check(cmd_args, exact_args=1):
+            local_file = cmd_args[0]
+            if os.path.isfile(local_file):
+                total_size = os.path.getsize(local_file)
+                self.send_msg(action_type="put", file_size=os.path.getsize(local_file), filename=local_file)
+                f = open(local_file, mode="rb")
+                uploaded_size = 0
+
+                progress_generator = self.progress_bar(total_size)
+                progress_generator.__next__()
+                for line in f:
+                    self.sock.send(line)
+                    uploaded_size += len(line)
+                    progress_generator.send(uploaded_size)
+
+                    # current_percent = int(uploaded_size / total_size * 100)
+                    # if current_percent > last_percent:
+                    #     print("#" * int(current_percent / 2) + "{}%".format(current_percent), end="\r", flush=True)
+                    #     # 把本次循环的百分比赋值给上一次的
+                    #     last_percent = current_percent
+                else:
+                    print("file upload done".center(50, "-"))
+                    f.close()
 
 
 if __name__ == '__main__':

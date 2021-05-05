@@ -4,6 +4,7 @@ import json
 import os
 import socket
 import subprocess
+import time
 
 from conf import settings
 
@@ -41,7 +42,11 @@ class FtpServer(object):
         while True:
             self.request, self.addr = self.sock.accept()
             print("got a new connection from {}".format(self.addr))
-            self.handle()
+            try:
+                self.handle()
+            except Exception as e:
+                print("Error has happened with client, close connection", e)
+                self.request.close()
 
     def handle(self):
         """处理所有的与用户的指令交互"""
@@ -183,3 +188,37 @@ class FtpServer(object):
                 self.send_response(351)
         else:
             self.send_response(351)
+
+    def _put(self, data):
+        """
+        1. 拿到local_file 文件名和大小
+        2. 检查本地是否已经有相应的文件 self.user_current_dir/local_file
+            2.1 存在：create a new file with file.timestamp suffix.
+            2.2 不存在: create a new file named local_file
+        3. 开始接收数据
+        :param data:
+        :return:
+        """
+        local_file = data.get("filename")
+        full_path = os.path.join(self.user_current_dir, local_file)
+        if os.path.isfile(full_path):
+            filename = "{}.{}".format(full_path, time.time())
+        else:
+            filename = full_path
+
+        f = open(filename, mode="wb")
+        total_size = data.get("file_size")
+        received_size = 0
+
+        while received_size < total_size:
+            if total_size - received_size < 8192:
+                data = self.request.recv(total_size - received_size)
+            else:
+                data = self.request.recv(8192)
+
+            received_size += len(data)
+            f.write(data)
+            print(received_size, total_size)
+        else:
+            print("file %s recv done" % local_file)
+            f.close()
