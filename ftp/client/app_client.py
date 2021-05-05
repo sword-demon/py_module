@@ -2,6 +2,7 @@ import os
 import socket
 import optparse
 import json
+import shelve
 
 
 class FtpClient(object):
@@ -12,6 +13,9 @@ class FtpClient(object):
 
     def __init__(self):
         self.username = None
+        self.shelve_obj = shelve.open(".luffy_db")
+        self.current_dir = None
+
         # 用户交互显示
         self.terminal_display = None
         parser = optparse.OptionParser()
@@ -60,14 +64,67 @@ class FtpClient(object):
             if response.get("status_code") == 200:
                 self.username = username
                 self.terminal_display = "[%s]>>>:" % self.username
+                self.current_dir = os.sep
                 return True
             else:
                 print(response.get("status_msg"))
             count += 1
 
+    def unfinished_file_check(self):
+        """检查shelve db 把未正常传完的文件列表打印，按用户的指令决定是否重传"""
+        if list(self.shelve_obj.keys()):
+            print("Unfinished file list".center(50, "-"))
+        for index, abs_file in enumerate(self.shelve_obj.keys()):
+            received_file_size = os.path.getsize(self.shelve_obj[abs_file][1])
+            print("%s. %s  %s  %s  %s" % (index, abs_file, self.shelve_obj[abs_file][0], received_file_size,
+                                          received_file_size / self.shelve_obj[abs_file][0]) * 100)
+
+        while True:
+            choice = input("[select file index to re-download]").strip()
+            if not choice:
+                continue
+            if choice == "back":
+                break
+            if choice.isdigit():
+                choice = int(choice)
+                if choice >= 0 and choice <= index:
+                    selected_file = list(self.shelve_obj.keys())[choice]
+                    already_received_size = os.path.getsize(self.shelve_obj[selected_file][1])
+                    print("tell server to resend file", selected_file)
+                    # filename + size + received_size
+                    self.send_msg(action_type="re_get", file_size=self.shelve_obj[selected_file][0],
+                                  received_size=already_received_size,
+                                  abs_filename=selected_file)
+                    response = self.get_response()
+                    if response.get("status_code") == 401:
+                        local_filename = self.shelve_obj[selected_file][1]
+                        # 续传：追加
+                        f = open(local_filename, mode="ab")
+                        total_size = self.shelve_obj[selected_file][0]
+
+                        recv_size = already_received_size
+                        current_percent = int(recv_size / total_size * 100)
+                        progress_generator = self.progress_bar(total_size, current_percent, current_percent)
+                        progress_generator.__next__()
+
+                        while recv_size < total_size:
+                            if total_size - recv_size < 8192:
+                                data = self.sock.recv(total_size - recv_size)
+                            else:
+                                data = self.sock.recv(8192)
+                            recv_size += len(data)
+                            f.write(data)
+                            progress_generator.send(recv_size)
+                            # print(recv_size)
+                        else:
+                            print("file re-get done")
+                    else:
+                        print(response.get("status_msg"))
+
     def intervactive(self):
         """处理与ftp server的交互"""
         if self.auth():
+            self.unfinished_file_check()
             while True:
                 user_input = input(self.terminal_display).strip()
                 if not user_input: continue
@@ -140,6 +197,7 @@ class FtpClient(object):
             if response.get("status_code") == 350:
                 # dir changed successfully
                 self.terminal_display = "[/%s]" % response.get("current_dir")
+                self.current_dir = response.get("current_dir")
 
     def _get(self, cmd_args):
         """download files from ftp server
@@ -163,7 +221,13 @@ class FtpClient(object):
                 received_size = 0
                 progress_generator = self.progress_bar(file_size)
                 progress_generator.__next__()
-                f = open(filename, mode="wb")
+
+                # save to shelve db
+                file_abs_path = os.path.join(self.current_dir, filename)
+                # 文件已收到的大小
+                self.shelve_obj[file_abs_path] = [file_size, "%s.download" % filename]
+
+                f = open("%s.download" % filename, mode="wb")
                 while received_size < file_size:
                     if file_size - received_size < 8192:
                         data = self.sock.recv(file_size - received_size)
@@ -176,13 +240,22 @@ class FtpClient(object):
                 else:
                     print("file [%s] recv done,file size [%s] " % (filename, file_size))
                     f.close()
+                    # 下载完成换名
+                    os.rename("%s.download" % filename, filename)
             else:
                 # status_code:300 file not exist
                 print(response.get("status_msg"))
 
-    def progress_bar(self, total_size):
-        current_percent = 0
-        last_percent = 0
+    def progress_bar(self, total_size, current_percent=0, last_percent=0):
+        """
+        打印进度条
+        :param last_percent:
+        :param current_percent:
+        :param total_size: 文件总长度
+        :return:
+        """
+        # current_percent = 0
+        # last_percent = 0
         while True:
             received_size = yield current_percent
             current_percent = int(received_size / total_size * 100)
@@ -220,6 +293,18 @@ class FtpClient(object):
                 else:
                     print("file upload done".center(50, "-"))
                     f.close()
+
+    """
+    断点续传
+    1. 检查是否有未正常传输完毕的文件
+        1.1 有：提示是否续传
+            1.1.1 把文件名+大小发给服务器
+            1.1.2 服务器端 按照客户端 数据找到文件
+                1.1.2.1 找不到：返回错误
+                1.1.2.2 找到了：返回准备发送文件的消息
+                1.1.2.3 打开文件，seek到指定文件的位置，开始发送文件。。。
+    
+    """
 
 
 if __name__ == '__main__':

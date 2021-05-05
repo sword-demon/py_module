@@ -20,6 +20,8 @@ class FtpServer(object):
         302: "This msg include msg size!",
         350: "Dir changed!",
         351: "Dir does not exist!",
+        401: "File exist, ready to re-send!",
+        402: "File exist, but file size doesn't match!",
     }
 
     # 消息最长1024
@@ -34,6 +36,7 @@ class FtpServer(object):
         self.accounts = self.load_accounts()
 
         self.user_obj = None
+        self.user_current_dir = None
 
     def run_forever(self):
         """启动socket server"""
@@ -137,7 +140,8 @@ class FtpServer(object):
                 2.2 不存在，返回状态码
         """
         filename = data.get("filename")
-        full_path = os.path.join(self.user_obj["home"], filename)
+        # full_path = os.path.join(self.user_obj["home"], filename)
+        full_path = os.path.join(self.user_current_dir, filename)
         if os.path.isfile(full_path):
             filesize = os.stat(full_path).st_size
             self.send_response(301, file_size=filesize)
@@ -222,3 +226,31 @@ class FtpServer(object):
         else:
             print("file %s recv done" % local_file)
             f.close()
+
+    def _re_get(self, data):
+        """re_send file to the client
+        1. 拼接文件路径
+        2. 判断文件是否存在
+            2.1 存在：判断文件大小是否与客户端发过来的一致
+                2.1.1 不一致：返回错误消息
+                2.1.2 一致：告诉客户端，准备续传
+                2.1.3 打开文件，seek到指定位置，循环发送
+            2.2 不存在：返回错误
+        """
+        # print(data)
+        abs_filename = data.get("abs_filename")
+        full_path = os.path.join(self.user_obj['home'], abs_filename).strip("\\")
+        if os.path.isfile(full_path):
+            if os.path.getsize(full_path) == data.get("file_size"):
+                self.send_response(status_code=401)
+                f = open(full_path, mode="rb")
+                f.seek(data.get("received_size"))
+                for line in f:
+                    self.request.send(line)
+                else:
+                    print("file re-send done".center(50, "-"))
+                    f.close()
+            else:
+                self.send_response(status_code=402, file_size_on_server=os.path.getsize(full_path))
+        else:
+            self.send_response(status_code=300)
