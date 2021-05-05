@@ -154,8 +154,6 @@ class FTPServer(object):
             else:
                 print('file send done..', full_path)
             f.close()
-
-
         else:
             self.send_response(300)
 
@@ -171,10 +169,10 @@ class FTPServer(object):
 
 
         """
-        print("_re_get", data)
+        # print("_re_get", data)
         abs_filename = data.get('abs_filename')
         full_path = os.path.join(self.user_obj['home'], abs_filename.strip("\\"))
-        print("reget fullpath", full_path)
+        # print("reget fullpath", full_path)
         print("user home", self.user_obj['home'])
         if os.path.isfile(full_path):  # 2.1
             if os.path.getsize(full_path) == data.get('file_size'):  # 2.1.2
