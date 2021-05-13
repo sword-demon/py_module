@@ -19,7 +19,10 @@ MAX_SOCKET_LISTEN = 5
 USER_HOME_DIR = os.path.join(BASE_DIR, 'home')
 
 # 用户信息存储文件
-ACCOUNT_FILE = os.path.join(BASE_DIR, 'conf', 'accounts.ini')
+ACCOUNT_FILE = os.path.join(BASE_DIR, 'db', 'accounts.ini')
 
 # 最大的并发数量
 MAX_THREAD_NUM = 10
+
+# 日志文件
+LOG_DIR = os.path.join(BASE_DIR, 'log')

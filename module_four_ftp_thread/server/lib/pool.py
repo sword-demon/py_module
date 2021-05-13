@@ -1,4 +1,5 @@
-from concurrent.futures import ThreadPoolExecutor
+from threading import Thread
+import queue
 
 
 class MyThreadPool:
@@ -6,6 +7,7 @@ class MyThreadPool:
     def __init__(self, max_thread_num):
         self.max_thread_num = max_thread_num
         self.pool = None
+        self.q = queue.Queue(self.max_thread_num)
         self.create_pool()
 
     def create_pool(self):
@@ -15,24 +17,15 @@ class MyThreadPool:
         :return:
         """
         print("创建了一个有{}条线程的线程池!".format(self.max_thread_num))
-        self.pool = ThreadPoolExecutor(self.max_thread_num)
+        # 在队列中存放max_thread_num个对象，起到线程池的作用
+        for i in range(self.max_thread_num):
+            self.q.put(Thread)
 
-    def close_pool(self):
-        """
-        关闭线程池
-        :param pool: 线程池对象
-        :return:
-        """
-        self.pool.shutdown()
-        print("线程池已释放!")
+    def get_thread(self):
+        """取出一条线程"""
+        return self.q.get()
 
-    def task_callback(self, result_response):
-        """
-        执行回调
-        :param result_response:
-        :return:
-        """
-        ret_dic = result_response.result()
-
-    def create_task(self, task, *args, **kwargs):
-        self.pool.submit(task, *args, **kwargs)
+    def is_empty(self):
+        """队列是否为空"""
+        if not self.q.empty():
+            return True

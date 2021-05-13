@@ -3,6 +3,26 @@ from conf import settings
 import json, hashlib, os, time
 import configparser
 import subprocess
+import platform
+
+
+class UtilBase:
+    LOG_DIR = settings.LOG_DIR
+
+    def logger(self, level='error', content=''):
+        time_now = time.strftime("%Y-%m-%d", time.localtime())
+        time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+        file_name = "{}.log".format(time_now)
+        file_path = os.path.join(self.LOG_DIR, file_name)
+        format_content = "{}.{},{}\n".format(time_str, level, content)
+        with open(file_path, mode="a", encoding="utf-8") as f:
+            f.write(format_content)
+
+    def md5(self, file_name):
+        m = hashlib.md5()
+        m.update(file_name.encode("utf-8"))
+        md5value = m.hexdigest()
+        return md5value
 
 
 class FTPServer(object):
@@ -20,37 +40,91 @@ class FTPServer(object):
         402: "File exist ,but file size doesn't match!",
     }
 
-    MSG_SIZE = 1024  # 消息最长1024
+    MSG_SIZE = settings.MAX_PACKET_SIZE  # 消息最长1024
+    # 是否可以iP,端口复用
+    allow_reuse_address = settings.ALLOW_REUSE_ADDRESS
 
-    def __init__(self, management_instance):
+    def __init__(self, management_instance, bind_and_active=True):
         self.management_instance = management_instance
+        # 实例化套接字对象
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sock.bind((settings.HOST, settings.PORT))
-        self.sock.listen(settings.MAX_SOCKET_LISTEN)
+        # 初始化加载用户数据
         self.accounts = self.load_accounts()
         self.user_obj = None
         self.user_current_dir = None
 
-    def run_forever(self):
+        if bind_and_active:
+            try:
+                self.server_bind()
+                self.server_active()
+            except Exception as e:
+                print(str(e))
+                print("连接断开")
+                self.server_close()
+
+    def run_forever(self, pool):
         """启动socket server"""
-        print('starting LuffyFtp server on %s:%s'.center(50, '-') % (settings.HOST, settings.PORT))
+        print('starting FTP server on %s:%s'.center(50, '-') % (settings.HOST, settings.PORT))
 
         while True:
-            self.request, self.addr = self.sock.accept()
-            print("got a new connection from %s....." % (self.addr,))
-            try:
-                self.handle()
-            except Exception as e:
-                print("Error happend with client,close connection.", e)
-                self.request.close()
+            request, addr = self.get_request()
+            print("got a new connection from %s....." % (addr,))
+            if not pool.is_empty():
+                print("当前暂无可用的线程")
+            t = pool.get_thread()
+            obj = t(target=MyHandler, args=(request, addr))
+            obj.start()
+
+    def server_close(self):
+        """关闭服务端"""
+        self.sock.close()
+
+    def server_bind(self):
+        """绑定IP端口，是否IP端口复用"""
+        if self.allow_reuse_address:
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.sock.bind((settings.HOST, settings.PORT))
+
+    def server_active(self):
+        """监听客户端连接数"""
+        self.sock.listen(settings.MAX_SOCKET_LISTEN)
+
+    def get_request(self):
+        """接收客户端连接"""
+        return self.sock.accept()
+
+    def close_request(self, request):
+        """关闭单个连接"""
+        request.close()
+
+    def load_accounts(self):
+        """加载所有账号信息"""
+        config_obj = configparser.ConfigParser()
+        config_obj.read(settings.ACCOUNT_FILE)
+
+        # print(config_obj.sections())
+        return config_obj
+
+
+class MyHandler(FTPServer, UtilBase):
+
+    def __init__(self, request, addr):
+        super().__init__(request, addr)
+        self.request = request
+        self.addr = addr
+        try:
+            self.handle()
+        except Exception as e:
+            print("Error happened with client,close connection.", e)
+            self.request.close()
 
     def handle(self):
         """处理与用户的所有指令交互"""
         while True:
-
             raw_data = self.request.recv(self.MSG_SIZE)
             print('------->', raw_data)
             if not raw_data:
+                # 数据为空，断开连接
                 print("connection %s is lost ...." % (self.addr,))
                 del self.request, self.addr
                 break
@@ -63,15 +137,7 @@ class FTPServer(object):
                     func(data)
 
             else:
-                print("invalid command,")
-
-    def load_accounts(self):
-        """加载所有账号信息"""
-        config_obj = configparser.ConfigParser()
-        config_obj.read(settings.ACCOUNT_FILE)
-
-        print(config_obj.sections())
-        return config_obj
+                print("无此功能...")
 
     def authenticate(self, username, password):
         """用户认证方法"""
@@ -89,6 +155,12 @@ class FTPServer(object):
                 self.user_obj['home'] = os.path.join(settings.USER_HOME_DIR, username)  # /home/alex
                 # set user home directory
                 self.user_current_dir = self.user_obj['home']
+                # self.logger('error', self.user_current_dir)
+                # self.logger('error', str(not os.path.isdir(self.user_current_dir)))
+                # self.logger('error', str(not os.path.exists(self.user_current_dir)))
+                if not os.path.exists(self.user_current_dir):
+                    # 设置了用户目录，还需要为用户新建目录
+                    os.mkdir(self.user_current_dir)
                 return True
             else:
                 # print("wrong username or password ")
@@ -166,14 +238,14 @@ class FTPServer(object):
                 2.1.2 如果一致，告诉客户端，准备续传吧
                 2.1.3 打开文件，Seek到指定位置，循环发送
             2.2 文件不存在，返回错误
-
-
         """
         # print("_re_get", data)
         abs_filename = data.get('abs_filename')
-        full_path = os.path.join(self.user_obj['home'], abs_filename.strip("\\"))
+        # 这里反斜杠和正斜杠，系统之分，fuck!
+        full_path = os.path.join(self.user_obj['home'], abs_filename.strip(os.sep))
         # print("reget fullpath", full_path)
-        print("user home", self.user_obj['home'])
+        # print("user home", self.user_obj['home'])
+        # self.logger('error', os.path.join(self.user_obj['home'], abs_filename.strip("\\")))
         if os.path.isfile(full_path):  # 2.1
             if os.path.getsize(full_path) == data.get('file_size'):  # 2.1.2
                 self.send_response(401)
@@ -191,38 +263,58 @@ class FTPServer(object):
 
     def _put(self, data):
         """client uploads file to server
-        1. 拿到local文件名+大小
+        1. 拿到local文件名+大小+md5值
         2. 检查本地是否已经有相应的文件。self.user_cuurent_dir/local_file
             2.1 if file exist , create a new file with file.timestamp suffix.
             2.2 if not , create a new file named local_file name
         3. start to receive data
         """
         local_file = data.get("filename")
-        full_path = os.path.join(self.user_current_dir, local_file)  # 文件
-        if os.path.isfile(full_path):  # 代表文件已存在，不能覆盖，
-            filename = "%s.%s" % (full_path, time.time())
-        else:
-            filename = full_path
-
-        f = open(filename, "wb")
-        total_size = data.get('file_size')
-        received_size = 0
-
-        while received_size < total_size:
-            if total_size - received_size < 8192:  # last recv
-                data = self.request.recv(total_size - received_size)
+        md5value = data.get("md5_value")
+        self.logger('error', str(type(local_file)))
+        self.logger('error', str(type(md5value)))
+        self.logger('error', local_file)
+        if self.md5(local_file) == md5value:
+            full_path = os.path.join(self.user_current_dir, local_file)  # 文件
+            if os.path.isfile(full_path):  # 代表文件已存在，不能覆盖，
+                filename = "%s.%s" % (full_path, time.time())
             else:
-                data = self.request.recv(8192)
-            received_size += len(data)
-            f.write(data)
-            print(received_size, total_size)
+                filename = full_path
+
+            f = open(filename, "wb")
+            total_size = data.get('file_size')
+            received_size = 0
+
+            while received_size < total_size:
+                if total_size - received_size < 8192:  # last recv
+                    data = self.request.recv(total_size - received_size)
+                else:
+                    data = self.request.recv(8192)
+                received_size += len(data)
+                f.write(data)
+                print(received_size, total_size)
+            else:
+                print('file %s recv done' % local_file)
+                f.close()
         else:
-            print('file %s recv done' % local_file)
-            f.close()
+            print("file is not same from user upload")
+            self.send_response(402)
+
+    @staticmethod
+    def __get_os_dir_list_command():
+        """根据不同系统获取对应的展示目录的命令"""
+        if platform.system() == 'Windows':
+            command = "dir"
+        elif platform.system() == 'Linux':
+            command = "ls"
+        else:
+            command = "ls"
+        return command
 
     def _ls(self, data):
         """run dir command and send result to client"""
-        cmd_obj = subprocess.Popen('dir %s' % self.user_current_dir, shell=True, stdout=subprocess.PIPE,
+        command = self.__get_os_dir_list_command()
+        cmd_obj = subprocess.Popen('%s %s' % (command, self.user_current_dir), shell=True, stdout=subprocess.PIPE,
                                    stderr=subprocess.PIPE)
         stdout = cmd_obj.stdout.read()
         stderr = cmd_obj.stderr.read()
@@ -243,7 +335,6 @@ class FTPServer(object):
             2.2 如果不存在，返回错误消息
 
         """
-        # /home/alex/FuckHomework/  cfd
         target_dir = data.get('target_dir')
         full_path = os.path.abspath(os.path.join(self.user_current_dir, target_dir))  # abspath是为了解决../..的问题
         print("full path:", full_path)

@@ -6,7 +6,7 @@ class ManagementTool(object):
 
     def __init__(self, sys_argv):
         self.sys_argv = sys_argv
-        print(self.sys_argv)
+        # print(self.sys_argv)
         self.verify_argv()
 
     def verify_argv(self):
@@ -22,9 +22,6 @@ class ManagementTool(object):
     def help_msg():
         msg = '''
         start       start FTP server
-        stop        stop FTP　server
-        restart     restart FTP server
-        createuser  username    create a ftp user
 
         '''
         exit(msg)
@@ -35,11 +32,8 @@ class ManagementTool(object):
         func = getattr(self, cmd)
         func(pool)
 
-    def start(self):
+    def start(self, pool):
         """start ftp server"""
         # 这个地方有待优化，可以采用武sir的socketserver的方式
         server = main.FTPServer(self)
-        server.run_forever()
-
-    def create_user(self):
-        print(self.sys_argv)
+        server.run_forever(pool)
